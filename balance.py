@@ -97,7 +97,7 @@ DEFAULT_ELO_FACTORIES = frozenset((
 ))
 # Built-in factories that use the B-rating API (Instagib variants).
 DEFAULT_ELO_B_FACTORIES = frozenset((
-    "ictf", "ift",
+    "ictf", "ift", "iffa",
 ))
 
 
