@@ -7,6 +7,7 @@ Tr1ckHouse community fork of selected plugins for [minqlx](https://github.com/Mi
 | Plugin | Description |
 |---|---|
 | [`balance.py`](balance.py) | Team-balance plugin with auto-swap, factory-aware ELO/ELO_B switching, and continuous-gametype fixes. See [`balance.md`](balance.md) for the full list of changes vs upstream. |
+| [`tr1ckhouse_roster/`](tr1ckhouse_roster/) | Publishes live roster (players, K/D, damage, captures) to the [Tr1ckHouse Discord bot](https://github.com/papamobi/discord-gamestatus/tree/tr1ckhouse). Requires an API key. |
 
 ## Installation
 
