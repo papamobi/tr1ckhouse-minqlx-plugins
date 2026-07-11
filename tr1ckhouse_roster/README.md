@@ -17,7 +17,7 @@ set qlx_tr1ckhouseKey "<your key>"
 
 ## Getting a key
 
-Reach out to me by username `f.mobile` or join the [Tr1ckHouse Discord](https://discord.gg/8sjDdcz) and message `mobi`.
+Reach out to me by discord username `f.mobile` or join the [Tr1ckHouse Discord](https://discord.gg/8sjDdcz) and message `mobi`.
 
 ## What it collects
 
