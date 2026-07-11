@@ -16,7 +16,7 @@ Setup on a new server:
     3. !load tr1ckhouse_roster
 
 To request a shared secret for the Tr1ckHouse-run registry, join
-https://discord.gg/8sjDdcz and message mobi.
+https://discord.gg/YOUR_INVITE_CODE and message mobi.
 
 See https://github.com/papamobi/tr1ckhouse-minqlx-plugins/tree/main/tr1ckhouse_roster
 for full documentation.
@@ -173,9 +173,6 @@ class tr1ckhouse_roster(minqlx.Plugin):
                 if stats and hasattr(stats, "damage_dealt")
                 else 0
             )
-            captures = (
-                int(stats.captures) if stats and hasattr(stats, "captures") else 0
-            )
 
             teams[team].append({
                 "steam_id": str(p.steam_id),
@@ -184,17 +181,17 @@ class tr1ckhouse_roster(minqlx.Plugin):
                 "kills": kills,
                 "deaths": deaths,
                 "damage": damage,
-                "captures": captures,
                 "ping": int(p.ping) if p.ping is not None else 0,
             })
 
+        # Team scores: read from self.game (QL-native), not g_redScore cvars
+        # which don't exist as persistent cvars in QL.
         try:
-            red_score = int(minqlx.get_cvar("g_redScore") or 0)
-        except (ValueError, TypeError):
+            game = self.game
+            red_score = int(game.red_score) if game and game.red_score is not None else 0
+            blue_score = int(game.blue_score) if game and game.blue_score is not None else 0
+        except Exception:
             red_score = 0
-        try:
-            blue_score = int(minqlx.get_cvar("g_blueScore") or 0)
-        except (ValueError, TypeError):
             blue_score = 0
 
         try:
