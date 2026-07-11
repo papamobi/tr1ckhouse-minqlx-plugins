@@ -17,10 +17,10 @@ set qlx_tr1ckhouseKey "<your key>"
 
 ## Getting a key
 
-Join the [Tr1ckHouse Discord](https://discord.gg/8sjDdcz) and message `mobi`.
+Reach out to me by username `f.mobile` or join the [Tr1ckHouse Discord](https://discord.gg/8sjDdcz) and message `mobi`.
 
 ## What it collects
 
-Per-player: Steam ID, name, score, kills, deaths, damage, captures, ping.
+Per-player: Steam ID, name, score, kills, deaths, damage, ping.
 Per-server: hostname, gametype, map, team scores. In-memory only, 180s TTL,
 not persisted. See [privacy policy](https://tr1ckhouse.net/gamestatus/privacy.html).
