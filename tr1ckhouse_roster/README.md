@@ -1,7 +1,7 @@
 # tr1ckhouse_roster
 
 minqlx plugin that publishes live server roster to the
-[Tr1ckHouse Discord bot](https://github.com/papamobi/discord-gamestatus/tree/tr1ckhouse).
+[GameStatus Support Discord bot](https://github.com/papamobi/discord-gamestatus/tree/tr1ckhouse).
 
 Sends server state (players, team scores, K/D, damage, captures) to a central
 HTTPS registry every ~60s. The Discord bot reads from that registry to render
@@ -17,7 +17,7 @@ set qlx_tr1ckhouseKey "<your key>"
 
 ## Getting a key
 
-Reach out to me by discord username `f.mobile` or join the [Tr1ckHouse Discord](https://discord.gg/8sjDdcz) and message `mobi`.
+Reach out to me by discord username `f.mobile` or join the [GameStatus Support Discord](https://discord.gg/CbRmKkCrKm) and message `mobi`.
 
 ## What it collects
 
