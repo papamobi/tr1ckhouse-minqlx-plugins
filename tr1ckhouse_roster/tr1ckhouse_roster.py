@@ -16,7 +16,7 @@ Setup on a new server:
     3. !load tr1ckhouse_roster
 
 To request a shared secret for the Tr1ckHouse-run registry, join
-https://discord.gg/YOUR_INVITE_CODE and message mobi.
+https://discord.gg/8sjDdcz and message mobi.
 
 See https://github.com/papamobi/tr1ckhouse-minqlx-plugins/tree/main/tr1ckhouse_roster
 for full documentation.
@@ -66,6 +66,15 @@ class tr1ckhouse_roster(minqlx.Plugin):
         self.add_command("roster", self.cmd_roster, permission=5)
 
         self._stop = threading.Event()
+        # Debounce state: event-driven publishes (from team_switch, round_end, etc.)
+        # are throttled so a burst of hot-hook events (e.g. during a shuffle/rebalance
+        # or in rapid-fire round_end sequences) collapses into a single publish.
+        # The heartbeat is unaffected and still fires on its own interval, so any
+        # events that get suppressed here get picked up within one heartbeat cycle.
+        self._last_publish_monotonic = 0.0
+        self._publish_debounce_seconds = 2.0
+        self._publish_lock = threading.Lock()
+
         self._start_heartbeat()
 
         self.logger.info(
@@ -77,9 +86,26 @@ class tr1ckhouse_roster(minqlx.Plugin):
     # --- hooks ---
 
     def on_event(self, *args, **kwargs):
-        self.publish()
+        self._publish_debounced()
 
     def on_map_change(self, mapname, factory):
+        # mapname/factory cvars aren't fully updated until after the map load
+        # completes and new_game fires. Delay a few seconds so the snapshot
+        # reflects the new state rather than the previous map's.
+        @minqlx.delay(3)
+        def delayed():
+            self._publish_debounced()
+        delayed()
+
+    def _publish_debounced(self):
+        """Publish immediately if it's been >= debounce interval since the last
+        publish; otherwise skip. The heartbeat is unaffected and will publish
+        on its own schedule regardless."""
+        now = time.monotonic()
+        with self._publish_lock:
+            if now - self._last_publish_monotonic < self._publish_debounce_seconds:
+                return
+            self._last_publish_monotonic = now
         self.publish()
 
     def on_unload(self, plugin):
@@ -199,8 +225,10 @@ class tr1ckhouse_roster(minqlx.Plugin):
         except (ValueError, TypeError):
             instagib = 0
 
-        net_port_cvar = minqlx.get_cvar("net_port") or "0"
-        net_port = int(net_port_cvar) if net_port_cvar.isdigit() else 0
+        try:
+            net_port = int(minqlx.get_cvar("net_port") or "0")
+        except (ValueError, TypeError):
+            net_port = 0
 
         # Public IP resolution: prefer the operator-set override (for NAT
         # servers where net_ip is internal), otherwise trust net_ip. The
