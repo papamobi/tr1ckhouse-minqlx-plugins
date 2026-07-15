@@ -17,7 +17,7 @@ set qlx_tr1ckhouseKey "<your key>"
 
 ## Getting a key
 
-Reach out to me by discord username `f.mobile` or join the [GameStatus Support Discord](https://discord.gg/CbRmKkCrKm) and message `mobi`.
+Reach out to me by discord username `f.mobile` or join the [GameStatus Support Discord](https://discord.gg/VMySf6wtaS) and message `mobi`.
 
 ## What it collects
 
