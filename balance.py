@@ -582,6 +582,12 @@ class balance(minqlx.Plugin):
         teams = dict([(p.steam_id, gt) for p in teams["red"] + teams["blue"]])
         self.add_request(teams, self.callback_teams, channel)
 
+    # Runs on the main thread. callback_teams reads self.teams(), self.game
+    # state, and issues channel.reply() / execute_suggestion() -- all of
+    # which touch engine state and need to run on the game tick, not on the
+    # fetch_ratings @minqlx.thread worker that would otherwise invoke this
+    # callback directly.
+    @minqlx.next_frame
     def callback_teams(self, players, channel):
         # prevent teams call from being called too fast; this also fixes the double-call when people join
         with self.teams_lock:
@@ -801,7 +807,7 @@ class balance(minqlx.Plugin):
             if attempt > 3:
                 raise Exception("couldn't fetch rating for player {}".format(player.steam_id))
 
-            minqlx.console_command("echo Couldn't fetch rating for player {} when adding to teams".format(player.steam_id))
+            minqlx.console_print("Couldn't fetch rating for player {} when adding to teams".format(player.steam_id))
             self.add_request({ player.steam_id: self.game.type_short }, self.callback_fetch_player_elo, minqlx.CHAT_CHANNEL)
             time.sleep(0.1)
             return self.get_player_elo(player, attempt + 1)
@@ -819,7 +825,7 @@ class balance(minqlx.Plugin):
             if attempt > 3:
                 raise Exception("couldn't calculate the average rating for teams")
 
-            minqlx.console_command("echo Couldn't calculate the average rating for teams!")
+            minqlx.console_print("Couldn't calculate the average rating for teams!")
             teams = self.teams()
             current = teams["red"] + teams["blue"]
             d = dict([(p.steam_id, gt) for p in current])

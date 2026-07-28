@@ -31,3 +31,4 @@ GPLv3 — same as the upstream `balance.py` this is forked from. See the license
 
 - [MadHypnofrog (Vlad Kurilenko)](https://github.com/MadHypnofrog)
 - Codenames Instagib FreezeTag
+- [tjone270 (Thomas Jones)](https://github.com/tjone270)
