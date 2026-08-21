@@ -175,6 +175,26 @@ class balance(minqlx.Plugin):
             # don't wait because we don't have the countdown
             self.execute_suggestion()
 
+    def _near_endgame(self):
+        """True if either team is within 2 rounds of winning the match.
+        Used to suppress force-swap decisions on round-based gametypes --
+        if the match is close to ending, moving a player between teams
+        disrupts endgame play. The 2-round window covers both:
+          - The current round being potentially last (roundlimit-1 already)
+          - The round after this one becoming potentially last
+        Only meaningful for gametypes that use roundlimit (AD, CA, FT);
+        returns False when roundlimit isn't set or is 0 (e.g. timelimit-
+        only games)."""
+        if self.game is None:
+            return False
+        try:
+            roundlimit = self.game.roundlimit
+            if roundlimit <= 0:
+                return False
+            return max(self.game.red_score, self.game.blue_score) >= roundlimit - 2
+        except (AttributeError, TypeError):
+            return False
+
     def handle_vote_ended(self, votes, vote, args, passed):
         if passed == True and vote == "shuffle" and self.get_cvar("qlx_balanceAuto", bool):
             gt = self.game.type_short
@@ -622,7 +642,17 @@ class balance(minqlx.Plugin):
                 .format(round(avg_red), round(avg_blue)))
 
         minimum_suggestion_diff = self.get_cvar("qlx_balanceMinimumSuggestionDiff", float)
-        force_swap_diff = self.get_cvar("qlx_balanceForceSwapDiff", float)
+        # Fetch as raw string, then convert manually. Passing `float` as the
+        # type to get_cvar causes minqlx to run float(res) internally, which
+        # crashes with TypeError when the cvar is unregistered (res is None)
+        # or ValueError when the cvar is set to an empty string. Since this
+        # cvar is intentionally opt-in (see notes at top of file), both cases
+        # are the normal "disabled" state.
+        force_swap_diff_raw = self.get_cvar("qlx_balanceForceSwapDiff")
+        try:
+            force_swap_diff = float(force_swap_diff_raw) if force_swap_diff_raw else None
+        except (TypeError, ValueError):
+            force_swap_diff = None
         if switch and switch[1] >= minimum_suggestion_diff:
             gt = self.game.type_short
             # Auto-swap is disabled (never triggers) when force_swap_diff is
@@ -637,6 +667,15 @@ class balance(minqlx.Plugin):
             force_swap = (force_swap_diff is not None
                           and force_swap_diff > 0
                           and diff_rounded >= force_swap_diff)
+            # Don't force-swap when the match is close to ending. On
+            # round-based gametypes, if either team is within 2 rounds of
+            # winning, forcibly moving a player between teams disrupts the
+            # endgame -- e.g. a high-scoring player gets shifted to the
+            # other side just as the match is about to end. The regular
+            # !agree suggestion path still runs below, so players can opt
+            # in if both sides genuinely want the swap.
+            if force_swap and gt in ROUND_BASED_GAMETYPES and self._near_endgame():
+                force_swap = False
             # On continuous gametypes (TDM, CTF, DOM), there is no
             # meaningful "end of the round" mid-game -- the queued swap
             # would only execute when the entire game ends. So when a
