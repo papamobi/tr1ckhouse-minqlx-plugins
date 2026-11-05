@@ -265,10 +265,12 @@ class tr1ckhouse_roster(minqlx.Plugin):
                 self._geo_cache[ip] = (results.get(ip, ""), now)
                 self._geo_pending.discard(ip)
 
-        # Push the new flags out without waiting for the heartbeat.
-        # publish() is @next_frame, so this is safe from a thread.
-        if results:
-            self._publish_debounced()
+        # Push the new flags out without waiting for the heartbeat. Not
+        # debounced: the lookup was started by a publish moments ago, so the
+        # debounce would almost always skip it. publish() is @next_frame, so
+        # this is safe from a thread. Skip if the plugin was unloaded meanwhile.
+        if results and not self._stop.is_set():
+            self.publish()
 
     # --- snapshot ---
 
