@@ -18,10 +18,17 @@ Setup on a new server:
 To request a shared secret for the Tr1ckHouse-run registry, join
 https://discord.gg/8sjDdcz and message mobi.
 
+Player country flags:
+    Each player's IP is resolved to a two-letter country code (ip-api.com,
+    batched, cached per IP) and only the code is published -- IPs never leave
+    the server towards the registry. Disable with:
+         set qlx_tr1ckhouseCountry "0"
+
 See https://github.com/papamobi/tr1ckhouse-minqlx-plugins/tree/main/tr1ckhouse_roster
 for full documentation.
 """
 
+import ipaddress
 import json
 import threading
 import time
@@ -29,6 +36,12 @@ import urllib.request
 import urllib.error
 
 import minqlx
+
+
+GEO_BATCH_URL = "http://ip-api.com/batch?fields=status,countryCode,query"
+GEO_BATCH_MAX = 100          # ip-api batch limit
+GEO_RETRY_SECONDS = 600      # retry failed lookups after 10 min
+GEO_CACHE_MAX = 4096         # bound memory on long-running servers
 
 
 class tr1ckhouse_roster(minqlx.Plugin):
@@ -40,10 +53,17 @@ class tr1ckhouse_roster(minqlx.Plugin):
         self.set_cvar_once("qlx_tr1ckhouseKey", "")
         self.set_cvar_once("qlx_tr1ckhouseHeartbeat", "60")
         self.set_cvar_once("qlx_tr1ckhousePublicIp", "")  # optional override
+        self.set_cvar_once("qlx_tr1ckhouseCountry", "1")
 
         self.url = self.get_cvar("qlx_tr1ckhouseUrl", str)
         self.key = self.get_cvar("qlx_tr1ckhouseKey", str)
         self.public_ip_override = self.get_cvar("qlx_tr1ckhousePublicIp", str)
+        self.country_enabled = self.get_cvar("qlx_tr1ckhouseCountry", bool)
+
+        # ip -> (country_code, resolved_at). "" code = lookup failed/unknown.
+        self._geo_cache = {}
+        self._geo_pending = set()
+        self._geo_lock = threading.Lock()
         self.heartbeat_interval = (
             self.get_cvar("qlx_tr1ckhouseHeartbeat", int) or 60
         )
@@ -183,8 +203,80 @@ class tr1ckhouse_roster(minqlx.Plugin):
         except Exception:
             self.logger.warning("unexpected POST failure", exc_info=True)
 
+    # --- country lookup ---
+
+    def _country_for(self, ip, missing):
+        """Called on the game thread from build_snapshot. Returns the cached
+        country code (or "") and collects IPs that still need a lookup."""
+        if not self.country_enabled or not ip:
+            return ""
+        now = time.time()
+        with self._geo_lock:
+            cached = self._geo_cache.get(ip)
+            if cached is not None:
+                code, at = cached
+                if code or now - at < GEO_RETRY_SECONDS:
+                    return code
+            if ip in self._geo_pending:
+                return ""
+        try:
+            if not ipaddress.ip_address(ip).is_global:
+                return ""          # LAN, loopback, bots
+        except ValueError:
+            return ""
+        missing.add(ip)
+        return ""
+
+    def _request_countries(self, ips):
+        with self._geo_lock:
+            ips = [ip for ip in ips if ip not in self._geo_pending][:GEO_BATCH_MAX]
+            self._geo_pending.update(ips)
+        if ips:
+            self._lookup_countries(ips)
+
+    @minqlx.thread
+    def _lookup_countries(self, ips):
+        """Background thread: one batched HTTP call, no engine access."""
+        results = {}
+        try:
+            req = urllib.request.Request(
+                GEO_BATCH_URL,
+                data=json.dumps(ips).encode("utf-8"),
+                method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "tr1ckhouse_roster/1.0",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                for row in json.loads(resp.read().decode("utf-8")):
+                    if row.get("status") == "success":
+                        code = str(row.get("countryCode") or "")
+                        if len(code) == 2 and code.isalpha():
+                            results[row.get("query")] = code.upper()
+        except Exception as e:
+            self.logger.debug(f"country lookup failed: {e}")
+
+        now = time.time()
+        with self._geo_lock:
+            if len(self._geo_cache) > GEO_CACHE_MAX:
+                self._geo_cache.clear()
+            for ip in ips:
+                self._geo_cache[ip] = (results.get(ip, ""), now)
+                self._geo_pending.discard(ip)
+
+        # Push the new flags out without waiting for the heartbeat. Not
+        # debounced: the lookup was started by a publish moments ago, so the
+        # debounce would almost always skip it. publish() is @next_frame, so
+        # this is safe from a thread. Skip if the plugin was unloaded meanwhile.
+        if results and not self._stop.is_set():
+            self.publish()
+
+    # --- snapshot ---
+
     def build_snapshot(self):
         teams = {"red": [], "blue": [], "spectator": [], "free": []}
+        missing_geo = set()
 
         for p in self.players():
             team = p.team
@@ -208,7 +300,11 @@ class tr1ckhouse_roster(minqlx.Plugin):
                 "deaths": deaths,
                 "damage": damage,
                 "ping": int(p.ping) if p.ping is not None else 0,
+                "country": self._country_for(getattr(p, "ip", ""), missing_geo),
             })
+
+        if missing_geo:
+            self._request_countries(missing_geo)
 
         # Team scores: read from self.game (QL-native), not g_redScore cvars
         # which don't exist as persistent cvars in QL.
