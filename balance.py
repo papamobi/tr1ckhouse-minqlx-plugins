@@ -195,7 +195,15 @@ class balance(minqlx.Plugin):
         except (AttributeError, TypeError):
             return False
 
+    def clear_suggestion(self):
+        # A pending swap refers to the old teams; once teams are reshuffled or a
+        # new game starts it must not run, or it undoes the new balance.
+        self.suggested_pair = None
+        self.suggested_agree = [False, False]
+
     def handle_vote_ended(self, votes, vote, args, passed):
+        if passed == True and vote == "shuffle":
+            self.clear_suggestion()
         if passed == True and vote == "shuffle" and self.get_cvar("qlx_balanceAuto", bool):
             gt = self.game.type_short
             if gt not in SUPPORTED_GAMETYPES:
@@ -214,6 +222,8 @@ class balance(minqlx.Plugin):
 
     # load player elo on connect immediately
     def handle_player_connect(self, player):
+        if not self.game:
+            return
         self.add_request({ player.steam_id: self.game.type_short }, self.callback_fetch_player_elo, minqlx.CHAT_CHANNEL)
 
     def handle_player_disconnect(self, player, reason):
@@ -228,6 +238,7 @@ class balance(minqlx.Plugin):
         # untouched -- their .factories file sets qlx_balanceApi explicitly
         # and the existing cache_cvars() flow handles them correctly.
         # Must run BEFORE cache_cvars() so api_url reflects the corrected value.
+        self.clear_suggestion()
         if self.game.factory in DEFAULT_ELO_FACTORIES:
             self.set_cvar("qlx_balanceApi", "elo")
         elif self.game.factory in DEFAULT_ELO_B_FACTORIES:
@@ -256,7 +267,7 @@ class balance(minqlx.Plugin):
             players = dict([(p.steam_id, gt) for p in teams["red"] + teams["blue"]])
             self.add_request(players, self.callback_teams, minqlx.CHAT_CHANNEL)
 
-    @minqlx.thread
+    # Main thread: reads self.players().
     def clean_player_data(self, player):
         for p in self.players().copy():
             if p.steam_id == player.steam_id and p.id != player.id:
@@ -270,8 +281,9 @@ class balance(minqlx.Plugin):
             if player.steam_id in self.ratings:
                 del self.ratings[player.steam_id]
 
+    # mapname is read by the caller on the main thread.
     @minqlx.thread
-    def fetch_ratings(self, players, request_id):
+    def fetch_ratings(self, players, request_id, mapname=""):
         if not players:
             return
 
@@ -302,12 +314,16 @@ class balance(minqlx.Plugin):
         while attempts < MAX_ATTEMPTS:
             attempts += 1
             url = self.api_url + "+".join([str(sid) for sid in players])
-            res = requests.get(url, headers={"X-QuakeLive-Map": self.game.map})
-            last_status = res.status_code
-            if res.status_code != requests.codes.ok:
+            try:
+                res = requests.get(url, headers={"X-QuakeLive-Map": mapname}, timeout=(2.0, 5.0))
+                last_status = res.status_code
+                if res.status_code != requests.codes.ok:
+                    continue
+                js = res.json()
+            except (requests.RequestException, ValueError) as e:
+                minqlx.console_print("balance: rating fetch failed: {}".format(e))
+                last_status = -1
                 continue
-
-            js = res.json()
             if "players" not in js:
                 last_status = -1
                 continue
@@ -367,7 +383,7 @@ class balance(minqlx.Plugin):
 
             break
 
-        if attempts == MAX_ATTEMPTS:
+        if last_status != requests.codes.ok:
             self.handle_ratings_fetched(request_id, last_status)
             return
 
@@ -389,7 +405,7 @@ class balance(minqlx.Plugin):
 
         # Only start a new thread if we need to make an API request.
         if self.remove_cached(players):
-            self.fetch_ratings(players, req)
+            self.fetch_ratings(players, req, self.game.map if self.game else "")
         else:
             # All players were cached, so we tell it to go ahead and call the callbacks.
             self.handle_ratings_fetched(req, requests.codes.ok)
@@ -510,7 +526,11 @@ class balance(minqlx.Plugin):
             name = sid
 
         gt = self.game.type_short
-        del self.db[RATING_KEY.format(sid, gt)]
+        key = RATING_KEY.format(sid, gt)
+        if key not in self.db:
+            player.tell("{} has no locally set {} rating.".format(name, gt.upper()))
+            return minqlx.RET_STOP_ALL
+        del self.db[key]
 
         # If we have the player cached, remove the game type.
         with self.ratings_lock:
@@ -586,6 +606,7 @@ class balance(minqlx.Plugin):
                     .format(round(avg_red), round(avg_blue)))
         else:
             channel.reply("Teams are good! Nothing to balance.")
+        self.clear_suggestion()
         return True
 
     def cmd_teams(self, player, msg, channel):
@@ -683,12 +704,12 @@ class balance(minqlx.Plugin):
             # immediately and say so. On round-based gametypes (AD, CA, FT),
             # keep the existing "queue for end of round" behavior.
             if force_swap and gt not in ROUND_BASED_GAMETYPES:
-                message = "Players ^6{}^7 and ^6{}^7 will be swapped now because teams are greatly unbalanced!"
+                message = "^7Elo difference is ^1{diff}^7. Swapping ^6{p1}^7 and ^6{p2}^7 now."
             elif force_swap:
-                message = "Players ^6{}^7 and ^6{}^7 will be swapped at the end of the round because teams are greatly unbalanced!"
+                message = "^7Elo difference is ^1{diff}^7. ^6{p1}^7 and ^6{p2}^7 will be swapped at round end."
             else:
-                message = "SUGGESTION: switch ^6{}^7 with ^6{}^7. Mentioned players can type !a to agree."
-            channel.reply(message.format(switch[0][0].clean_name, switch[0][1].clean_name))
+                message = "SUGGESTION: switch ^6{p1}^7 with ^6{p2}^7. Mentioned players can type !a to agree."
+            channel.reply(message.format(p1=switch[0][0].clean_name, p2=switch[0][1].clean_name, diff=diff_rounded))
             if not self.suggested_pair or self.suggested_pair[0] != switch[0][0] or self.suggested_pair[1] != switch[0][1]:
                 self.suggested_pair = (switch[0][0], switch[0][1])
                 self.suggested_agree = [True, True] if force_swap else [False, False]
@@ -703,7 +724,9 @@ class balance(minqlx.Plugin):
                 channel.reply("Teens look ^6good!")
             else:
                 channel.reply("Teams look good!")
-            self.suggested_pair = None
+            # Clear the agree flags too: leaving them True with no pair makes
+            # every round_end call execute_suggestion() on None.
+            self.clear_suggestion()
 
         return True
 
@@ -818,18 +841,22 @@ class balance(minqlx.Plugin):
         return avg
 
     def execute_suggestion(self):
+        if not self.suggested_pair:
+            self.clear_suggestion()
+            return
         p1, p2 = self.suggested_pair
+        self.clear_suggestion()
         try:
             p1.update()
             p2.update()
         except minqlx.NonexistentPlayerError:
             return
 
-        if p1.team != "spectator" and p2.team != "spectator":
-            self.switch(self.suggested_pair[0], self.suggested_pair[1])
-
-        self.suggested_pair = None
-        self.suggested_agree = [False, False]
+        # Skip if either player went to spec or they ended up on the same team
+        # (switch() would raise "Both players are on the same team").
+        if "spectator" in (p1.team, p2.team) or p1.team == p2.team:
+            return
+        self.switch(p1, p2)
 
     # helper functions for the queue plugin
     # empty callback on purpose - used to fetch the player elo through sending it to add_request without printing
